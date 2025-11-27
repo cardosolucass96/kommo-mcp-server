@@ -1,14 +1,14 @@
 /**
  * Kommo MCP Server - Cloudflare Workers
  * 
- * API HTTP compatível com MCP over HTTP/SSE
+ * API HTTP com autenticação Bearer
  */
 
 // Tipos para Cloudflare Workers
 export interface Env {
   KOMMO_BASE_URL: string;
   KOMMO_ACCESS_TOKEN: string;
-  KOMMO_DEBUG?: string;
+  API_BEARER_TOKEN: string; // Token para autenticar requisições à API
 }
 
 // Importar cliente adaptado para fetch
@@ -26,13 +26,6 @@ import {
   PipelinesListResponse,
   StagesListResponse,
 } from "./kommo/types.js";
-
-// Session storage (por request - em produção use KV ou Durable Objects)
-interface SessionContext {
-  leadId: number | null;
-  leadName: string | null;
-  startedAt: string | null;
-}
 
 // Cache simples em memória (por worker instance)
 const pipelinesCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -72,102 +65,15 @@ function successResponse(data: unknown, message?: string): Response {
 // Tool handlers
 type ToolHandler = (
   params: Record<string, unknown>,
-  client: KommoClientInterface,
-  session: SessionContext
-) => Promise<{ response: Response; session?: SessionContext }>;
+  client: KommoClientInterface
+) => Promise<Response>;
 
 const tools: Record<string, { description: string; handler: ToolHandler }> = {
-  // ========== SESSION TOOLS ==========
-  
-  kommo_start_session: {
-    description: "Inicia atendimento com um lead",
-    handler: async (params, client, session) => {
-      const { lead_id, query } = params as { lead_id?: number; query?: string };
-      
-      let leadId: number;
-      let leadName: string;
-
-      if (lead_id) {
-        const response = await client.get<LeadsListResponse>("/leads", {
-          "filter[id]": lead_id,
-        });
-        const lead = response._embedded?.leads?.[0];
-        if (!lead) {
-          return { response: errorResponse(`Lead ${lead_id} não encontrado.`, 404) };
-        }
-        leadId = lead.id;
-        leadName = lead.name;
-      } else if (query) {
-        const response = await client.get<LeadsListResponse>("/leads", {
-          query: query,
-          limit: 1,
-        });
-        const lead = response._embedded?.leads?.[0];
-        if (!lead) {
-          return { response: errorResponse(`Nenhum lead encontrado com "${query}".`, 404) };
-        }
-        leadId = lead.id;
-        leadName = lead.name;
-      } else {
-        return { response: errorResponse("Informe lead_id ou query.") };
-      }
-
-      const newSession: SessionContext = {
-        leadId,
-        leadName,
-        startedAt: new Date().toISOString(),
-      };
-
-      return {
-        response: successResponse(
-          { lead_id: leadId, lead_name: leadName, session: newSession },
-          `🎯 Atendimento iniciado com "${leadName}"`
-        ),
-        session: newSession,
-      };
-    },
-  },
-
-  kommo_end_session: {
-    description: "Encerra o atendimento atual",
-    handler: async (_params, _client, session) => {
-      if (!session.leadId) {
-        return { response: errorResponse("Nenhum atendimento ativo.") };
-      }
-      
-      const leadName = session.leadName;
-      const newSession: SessionContext = { leadId: null, leadName: null, startedAt: null };
-
-      return {
-        response: successResponse(
-          { lead_name: leadName },
-          `✅ Atendimento com "${leadName}" encerrado`
-        ),
-        session: newSession,
-      };
-    },
-  },
-
-  kommo_get_session: {
-    description: "Mostra informações do atendimento atual",
-    handler: async (_params, _client, session) => {
-      if (!session.leadId) {
-        return { response: successResponse({ active: false }, "⚠️ Nenhum atendimento ativo.") };
-      }
-      return {
-        response: successResponse(
-          { active: true, lead_id: session.leadId, lead_name: session.leadName },
-          `🎯 Em atendimento: "${session.leadName}"`
-        ),
-      };
-    },
-  },
-
   // ========== LIST LEADS ==========
   
   kommo_list_leads: {
     description: "Lista leads do Kommo CRM",
-    handler: async (params, client, _session) => {
+    handler: async (params, client) => {
       const { query, limit = 10, page = 1 } = params as { query?: string; limit?: number; page?: number };
       
       const queryParams: Record<string, unknown> = { limit, page };
@@ -176,99 +82,109 @@ const tools: Record<string, { description: string; handler: ToolHandler }> = {
       const response = await client.get<LeadsListResponse>("/leads", queryParams);
       const leads = response._embedded?.leads || [];
 
-      return {
-        response: successResponse(
-          { total: leads.length, leads },
-          `Encontrados ${leads.length} leads`
-        ),
-      };
+      return successResponse(
+        { total: leads.length, leads },
+        `Encontrados ${leads.length} leads`
+      );
     },
   },
 
   // ========== UPDATE LEAD ==========
   
   kommo_update_lead: {
-    description: "Atualiza o lead em atendimento",
-    handler: async (params, client, session) => {
-      if (!session.leadId) {
-        return { response: errorResponse("⛔ Nenhum atendimento ativo. Use kommo_start_session primeiro.", 403) };
-      }
+    description: "Atualiza um lead específico",
+    handler: async (params, client) => {
+      const { lead_id, name, price, status_id } = params as { 
+        lead_id: number;
+        name?: string; 
+        price?: number; 
+        status_id?: number;
+      };
 
-      const { name, price, status_id } = params as { name?: string; price?: number; status_id?: number };
+      if (!lead_id) {
+        return errorResponse("lead_id é obrigatório");
+      }
       
       const body: LeadUpdateRequest = {};
       if (name) body.name = name;
       if (price !== undefined) body.price = price;
       if (status_id) body.status_id = status_id;
 
-      const response = await client.patch<Lead>(`/leads/${session.leadId}`, body);
+      const response = await client.patch<Lead>(`/leads/${lead_id}`, body);
 
-      return {
-        response: successResponse(response, `Lead "${session.leadName}" atualizado`),
-      };
+      return successResponse(response, `Lead ${lead_id} atualizado`);
     },
   },
 
   // ========== ADD NOTES ==========
   
   kommo_add_notes: {
-    description: "Adiciona nota ao lead em atendimento",
-    handler: async (params, client, session) => {
-      if (!session.leadId) {
-        return { response: errorResponse("⛔ Nenhum atendimento ativo.", 403) };
+    description: "Adiciona nota a um lead",
+    handler: async (params, client) => {
+      const { lead_id, text } = params as { lead_id: number; text: string };
+
+      if (!lead_id) {
+        return errorResponse("lead_id é obrigatório");
       }
 
-      const { text } = params as { text: string };
+      if (!text) {
+        return errorResponse("text é obrigatório");
+      }
       
       const payload: NoteCreateRequest[] = [{
-        entity_id: session.leadId,
+        entity_id: lead_id,
         note_type: "common",
         params: { text },
       }];
 
       const response = await client.post<NotesCreateResponse>("/leads/notes", payload);
 
-      return {
-        response: successResponse(
-          response._embedded?.notes || [],
-          `📝 Nota adicionada ao lead "${session.leadName}"`
-        ),
-      };
+      return successResponse(
+        response._embedded?.notes || [],
+        `📝 Nota adicionada ao lead ${lead_id}`
+      );
     },
   },
 
   // ========== ADD TASKS ==========
   
   kommo_add_tasks: {
-    description: "Cria tarefa para o lead em atendimento",
-    handler: async (params, client, session) => {
-      if (!session.leadId) {
-        return { response: errorResponse("⛔ Nenhum atendimento ativo.", 403) };
-      }
-
-      const { text, complete_till, task_type_id = 1 } = params as { 
+    description: "Cria tarefa para um lead",
+    handler: async (params, client) => {
+      const { lead_id, text, complete_till, task_type_id = 1 } = params as { 
+        lead_id: number;
         text: string; 
         complete_till: number; 
         task_type_id?: number;
       };
+
+      if (!lead_id) {
+        return errorResponse("lead_id é obrigatório");
+      }
+
+      if (!text) {
+        return errorResponse("text é obrigatório");
+      }
+
+      if (!complete_till) {
+        return errorResponse("complete_till é obrigatório (Unix timestamp)");
+      }
       
       const payload: TaskCreateRequest[] = [{
         task_type_id,
         text,
         complete_till,
-        entity_id: session.leadId,
+        entity_id: lead_id,
         entity_type: "leads",
         request_id: `task_${Date.now()}`,
       }];
 
       const response = await client.post<TasksCreateResponse>("/tasks", payload);
 
-      return {
-        response: successResponse(
-          response._embedded?.tasks || [],
-          `📞 Tarefa criada para "${session.leadName}"`
-        ),
-      };
+      return successResponse(
+        response._embedded?.tasks || [],
+        `📞 Tarefa criada para lead ${lead_id}`
+      );
     },
   },
 
@@ -276,10 +192,10 @@ const tools: Record<string, { description: string; handler: ToolHandler }> = {
   
   kommo_list_pipelines: {
     description: "Lista pipelines e estágios do Kommo",
-    handler: async (_params, client, _session) => {
+    handler: async (_params, client) => {
       const cached = getCached<unknown>("pipelines");
       if (cached) {
-        return { response: successResponse(cached, "Pipelines (cache)") };
+        return successResponse(cached, "Pipelines (cache)");
       }
 
       const response = await client.get<PipelinesListResponse>("/leads/pipelines");
@@ -298,9 +214,7 @@ const tools: Record<string, { description: string; handler: ToolHandler }> = {
 
       setCache("pipelines", formatted, 600);
 
-      return {
-        response: successResponse(formatted, `${pipelines.length} pipelines`),
-      };
+      return successResponse(formatted, `${pipelines.length} pipelines`);
     },
   },
 
@@ -308,13 +222,17 @@ const tools: Record<string, { description: string; handler: ToolHandler }> = {
   
   kommo_list_pipeline_stages: {
     description: "Lista estágios de um pipeline específico",
-    handler: async (params, client, _session) => {
+    handler: async (params, client) => {
       const { pipeline_id } = params as { pipeline_id: number };
+
+      if (!pipeline_id) {
+        return errorResponse("pipeline_id é obrigatório");
+      }
       
       const cacheKey = `stages_${pipeline_id}`;
       const cached = getCached<unknown>(cacheKey);
       if (cached) {
-        return { response: successResponse(cached, "Estágios (cache)") };
+        return successResponse(cached, "Estágios (cache)");
       }
 
       const response = await client.get<StagesListResponse>(
@@ -331,12 +249,21 @@ const tools: Record<string, { description: string; handler: ToolHandler }> = {
 
       setCache(cacheKey, formatted, 600);
 
-      return {
-        response: successResponse(formatted, `${stages.length} estágios`),
-      };
+      return successResponse(formatted, `${stages.length} estágios`);
     },
   },
 };
+
+// Validar Bearer Token
+function validateAuth(request: Request, env: Env): boolean {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader) return false;
+  
+  const [type, token] = authHeader.split(" ");
+  if (type !== "Bearer" || !token) return false;
+  
+  return token === env.API_BEARER_TOKEN;
+}
 
 // Handler principal para Cloudflare Workers
 export default {
@@ -347,7 +274,7 @@ export default {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, X-Session",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
     };
 
     // Handle CORS preflight
@@ -355,7 +282,7 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Health check
+    // Health check (público)
     if (url.pathname === "/" || url.pathname === "/health") {
       return new Response(
         JSON.stringify({ 
@@ -365,6 +292,14 @@ export default {
           tools: Object.keys(tools),
         }),
         { headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Todas as outras rotas requerem autenticação
+    if (!validateAuth(request, env)) {
+      return new Response(
+        JSON.stringify({ error: true, message: "Unauthorized. Bearer token required." }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
@@ -393,40 +328,18 @@ export default {
           );
         }
 
-        // Recuperar sessão do header ou criar nova
-        let session: SessionContext = { leadId: null, leadName: null, startedAt: null };
-        const sessionHeader = request.headers.get("X-Session");
-        if (sessionHeader) {
-          try {
-            session = JSON.parse(atob(sessionHeader));
-          } catch {
-            // Sessão inválida, usar nova
-          }
-        }
-
         // Criar cliente Kommo
         const client = createKommoClient(env.KOMMO_BASE_URL, env.KOMMO_ACCESS_TOKEN);
 
         // Executar tool
-        const result = await tools[toolName].handler(params, client, session);
+        const result = await tools[toolName].handler(params, client);
 
-        // Adicionar nova sessão ao header se mudou
-        const responseHeaders: Record<string, string> = {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        };
-        
-        if (result.session) {
-          responseHeaders["X-Session"] = btoa(JSON.stringify(result.session));
-        }
-
-        // Clonar a response com os novos headers
-        const originalResponse = result.response;
-        const responseBody = await originalResponse.text();
+        // Retornar response com CORS headers
+        const responseBody = await result.text();
         
         return new Response(responseBody, {
-          status: originalResponse.status,
-          headers: responseHeaders,
+          status: result.status,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
         });
 
       } catch (error) {
