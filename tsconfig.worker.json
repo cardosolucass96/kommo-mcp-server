@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": false,
+    "noEmit": true
+  },
+  "include": ["src/worker.ts", "src/kommo/clientCF.ts", "src/kommo/types.ts", "src/context/sessionContext.ts", "src/utils/errors.ts", "src/utils/logger.ts"],
+  "exclude": ["node_modules", "dist"]
+}
