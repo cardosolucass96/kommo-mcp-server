@@ -1,13 +1,7 @@
 /**
  * Kommo MCP Server - Cloudflare Workers
- * 
- * Implementa MCP over HTTP (Streamable) para compatibilidade com n8n e outros clientes
+ * Multi-tenant: Token Bearer = senha|subdomain|kommoToken
  */
-
-// Tipos para Cloudflare Workers
-export interface Env {
-  // Não precisa mais de env vars - senha fixa no código
-}
 
 // Importar cliente adaptado para fetch
 import { createKommoClient, KommoClientInterface } from "./kommo/clientCF.js";
@@ -408,7 +402,7 @@ function validateAuth(request: Request): AuthResult {
 
 // Handler principal para Cloudflare Workers
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
     // CORS headers
