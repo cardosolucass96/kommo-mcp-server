@@ -1,14 +1,47 @@
-# Deploy no Coolify
+# Deploy no Coolify (Self-Hosted)
 
-Coolify é uma plataforma de deploy self-hosted (alternativa open-source ao Heroku/Vercel).
+Coolify é uma plataforma de deploy self-hosted open-source (alternativa ao Heroku/Vercel/Railway).
+
+**Pré-requisitos:**
+- Coolify instalado no seu servidor ([docs.coolify.io](https://coolify.io/docs))
+- Acesso ao painel Coolify (ex: `https://coolify.seudominio.com`)
+
+## ⚙️ Configuração Inicial do Coolify (se ainda não fez)
+
+### 1. Servidor/Destino
+
+No Coolify, configure um **Server** (destino de deploy):
+- Pode ser `localhost` (mesmo servidor do Coolify)
+- Ou servidor remoto via SSH
+
+### 2. Wildcard Domain (Opcional, mas recomendado)
+
+Configure um domínio wildcard para apps automáticos:
+```
+*.apps.seudominio.com → IP_DO_SERVIDOR
+```
+
+Isso permite URLs automáticas tipo:
+- `https://kommo-mcp.apps.seudominio.com`
+- `https://outro-app.apps.seudominio.com`
+
+### 3. Verificar Docker
+
+Coolify precisa de Docker instalado no servidor de destino:
+```bash
+docker --version
+docker compose version
+```
+
+---
 
 ## 🚀 Opção 1: Deploy via GitHub (Recomendado)
 
 ### 1. Preparar Coolify
 
-1. Acesse seu painel Coolify
+1. Acesse seu painel Coolify self-hosted
 2. Clique em **+ New Resource**
-3. Selecione **Public Repository**
+3. Selecione **Public Repository** (ou **Private Repository** se tiver GitHub conectado)
 
 ### 2. Configurar Projeto
 
@@ -47,7 +80,11 @@ NODE_ENV=production
 
 1. Clique em **Deploy**
 2. Aguarde o build (leva ~2-3 minutos)
-3. Coolify vai gerar uma URL automática: `https://seu-app.coolify.io`
+3. Coolify vai gerar uma URL automática baseada no seu domínio
+   - Exemplo: `https://kommo-mcp.seu-servidor.com`
+   - Ou IP direto: `http://IP_DO_SERVIDOR:3000`
+
+**Importante:** Se você configurou um domínio wildcard no Coolify (ex: `*.apps.seudominio.com`), a URL será automática. Caso contrário, configure manualmente na seção **Domains**.
 
 ---
 
@@ -105,11 +142,11 @@ Clique em **Deploy** e aguarde.
 
 1. Vá em **Domains**
 2. Adicione seu domínio: `mcp.seudominio.com`
-3. Coolify configura SSL automaticamente (Let's Encrypt)
+3. Coolify configura SSL automaticamente com Let's Encrypt (se configurado)
 
 ### No seu DNS:
 
-Adicione um registro:
+**Opção A: Registro A (Recomendado)**
 ```
 Type: A
 Name: mcp
@@ -117,13 +154,22 @@ Value: IP_DO_SEU_SERVIDOR_COOLIFY
 TTL: 3600
 ```
 
-Ou CNAME:
+**Opção B: CNAME (se tiver domínio base no Coolify)**
 ```
 Type: CNAME
 Name: mcp
-Value: seu-app.coolify.io
+Value: apps.seuservidor.com
 TTL: 3600
 ```
+
+**Aguarde propagação DNS (~5-30 minutos)**
+
+### SSL/HTTPS
+
+Se você configurou SSL no Coolify:
+- ✅ Let's Encrypt automático (recomendado)
+- ✅ Certificado customizado (avançado)
+- ⚠️ Certifique-se que porta 80 e 443 estão abertas no firewall
 
 ---
 
@@ -161,12 +207,15 @@ No Coolify você pode ver:
 ## 🧪 Testar Deploy
 
 ```bash
-# Health check
-curl https://seu-app.coolify.io/health
+# Health check (substitua pela sua URL)
+curl https://mcp.seudominio.com/health
+
+# Ou com IP direto
+curl http://IP_DO_SERVIDOR:3000/health
 
 # Testar MCP endpoint
 TOKEN="M0ra1s#3013|mpcamotestecom|SEU_KOMMO_TOKEN"
-curl -X POST https://seu-app.coolify.io/mcp \
+curl -X POST https://mcp.seudominio.com/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -185,21 +234,95 @@ curl -X POST https://seu-app.coolify.io/mcp \
 **Erro:** `Port already in use`
 - **Solução:** Mude a porta no Coolify (ex: 3001)
 
+**Erro:** `Docker daemon not accessible`
+- **Solução:** Verifique se Docker está rodando no servidor de destino
+```bash
+# No servidor
+sudo systemctl status docker
+sudo systemctl start docker
+```
+
 ### Container não inicia
 
 1. Vá em **Logs** no Coolify
 2. Procure por erros
 3. Verifique variáveis de ambiente
 
+**Erro comum:** Variável de ambiente faltando
+```bash
+# Certifique-se que PORT está definido
+PORT=3000
+```
+
 ### Health check falhando
 
 - Verifique se `/health` responde `200 OK`
 - Aumente o `start_period` para `10s`
+- Teste manualmente:
+```bash
+# Dentro do servidor
+curl http://localhost:3000/health
+```
 
 ### Sem acesso externo
 
-- Verifique se a porta está exposta no Coolify
-- Confirme que o firewall permite tráfego na porta
+**Firewall bloqueando:**
+```bash
+# Ubuntu/Debian
+sudo ufw allow 3000/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw status
+
+# CentOS/RHEL
+sudo firewall-cmd --add-port=3000/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+**Porta não exposta no Coolify:**
+- Vá em **Configuration** → **Ports**
+- Certifique-se que porta 3000 está mapeada
+
+**DNS não propagou:**
+```bash
+# Verificar DNS
+nslookup mcp.seudominio.com
+dig mcp.seudominio.com
+
+# Testar com IP direto primeiro
+curl http://IP_DO_SERVIDOR:3000/health
+```
+
+### SSL/HTTPS não funciona
+
+**Let's Encrypt falhando:**
+```bash
+# Certifique-se que portas estão abertas
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Verifique DNS apontando para IP correto
+nslookup mcp.seudominio.com
+```
+
+**Certificado expirado:**
+- Coolify renova automaticamente
+- Se falhar, force renovação no painel Coolify
+
+### Performance lenta
+
+**Pouca memória:**
+```bash
+# Verificar uso de memória
+docker stats kommo-mcp-server
+
+# Aumentar limite no Coolify
+# Configuration → Resources → Memory Limit: 512M
+```
+
+**CPU alto:**
+- Verifique logs para erros infinitos
+- Considere adicionar cache Redis (futuro)
 
 ---
 
@@ -239,12 +362,20 @@ Configure webhooks no Coolify para receber notificações de:
 
 ## 📞 Usar no n8n
 
-Depois do deploy no Coolify, configure no n8n:
+Depois do deploy no Coolify, configure no n8n MCP Agent:
 
 ```
-URL: https://seu-app.coolify.io/mcp
+URL: https://mcp.seudominio.com/mcp
 Bearer Token: M0ra1s#3013|subdomain|kommoToken
 ```
+
+Ou com IP direto (não recomendado para produção):
+```
+URL: http://IP_DO_SERVIDOR:3000/mcp
+Bearer Token: M0ra1s#3013|subdomain|kommoToken
+```
+
+**⚠️ Importante:** Use sempre HTTPS em produção para segurança.
 
 ---
 
