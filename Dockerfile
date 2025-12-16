@@ -10,8 +10,8 @@ WORKDIR /app
 # Copiar package files
 COPY package*.json ./
 
-# Instalar dependências (incluindo devDependencies para build)
-RUN npm ci
+# Instalar dependências (ignorando scripts para evitar erro no prepare)
+RUN npm ci --ignore-scripts
 
 # Copiar código fonte
 COPY tsconfig.json ./
