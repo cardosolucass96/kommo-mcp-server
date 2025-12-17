@@ -6,6 +6,7 @@ Servidor MCP (Model Context Protocol) para integração com o CRM Kommo via Fast
 
 - **Multi-tenant**: Suporta múltiplas contas Kommo via token Bearer
 - **MCP over HTTP**: Protocolo JSON-RPC 2.0 (Streamable)
+- **Sistema de Aprovação**: Pede confirmação antes de operações em múltiplos registros (via sampling)
 - **Cache inteligente**: Pipelines e campos customizados cacheados
 - **Validação de entrada**: Schemas Zod para validação robusta de parâmetros
 - **Type-safe**: TypeScript com strict mode e tipagens completas
@@ -146,8 +147,15 @@ curl -H "Authorization: Bearer Admin123|mpcamotestecom|eyJ0eXAi..." \
 ### Documentação
 - 📄 `README.md` - Visão geral e setup
 - 📄 `USAGE.md` - Exemplos práticos de uso com curl
+- 📄 `APPROVAL-SYSTEM.md` - Sistema de aprovação para operações em múltiplos registros
 - 📄 `src/constants.ts` - Constantes e configurações
 - 📄 `src/schemas.ts` - Schemas de validação
+
+## 🔐 Sistema de Aprovação
+
+O servidor implementa um sistema de aprovação via **MCP sampling** para operações que afetam múltiplos registros. Quando você executa comandos como "adicione nota em lucas cardoso" e existem 2 ou mais leads com esse nome, o agente **pedirá aprovação** antes de executar.
+
+**Consulte `APPROVAL-SYSTEM.md` para detalhes completos.**
 
 ## 🛠️ Desenvolvimento
 

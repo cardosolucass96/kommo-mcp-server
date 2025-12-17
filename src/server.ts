@@ -144,7 +144,7 @@ async function generateToolDefinitions(client: KommoClientInterface): Promise<MC
     },
     {
       name: "kommo_update_lead",
-      description: `Atualiza um lead específico (nome, preço, status ou campos customizados). FLUXO: 1) Use kommo_list_leads para encontrar o lead_id. 2) Para mudar status, use os status_id listados na descrição de kommo_list_leads. 3) Para campos customizados, use kommo_list_lead_custom_fields. IMPORTANTE: Cada CRM tem campos diferentes. EXEMPLO para campo customizado: custom_fields_values: [{field_id: 1093415, values: [{value: 'texto'}]}]${pipelinesInfo}`,
+      description: `Atualiza um lead específico (nome, preço, status ou campos customizados). FLUXO: 1) Use kommo_list_leads para encontrar o lead_id. 2) Para mudar status, use os status_id listados na descrição de kommo_list_leads. 3) Para campos customizados, use kommo_list_lead_custom_fields. ⚠️ IMPORTANTE APROVAÇÃO: Se a busca retornar MÚLTIPLOS leads, você DEVE pedir aprovação do usuário ANTES de atualizar, mostrando claramente: quantos leads serão afetados, nome/ID de cada um, e o que será alterado. Cada CRM tem campos diferentes. EXEMPLO para campo customizado: custom_fields_values: [{field_id: 1093415, values: [{value: 'texto'}]}]${pipelinesInfo}`,
       inputSchema: {
         type: "object",
         properties: {
@@ -180,7 +180,7 @@ async function generateToolDefinitions(client: KommoClientInterface): Promise<MC
     },
     {
       name: "kommo_add_notes",
-      description: "Adiciona nota/observação a um lead no Kommo CRM. WORKFLOW: 1) Use kommo_list_leads para obter o lead_id. 2) Passe o lead_id e texto da nota. A nota será registrada no histórico do lead, visível para toda a equipe. Use para documentar ligações, reuniões, acordos ou qualquer informação relevante sobre o lead.",
+      description: "Adiciona nota/observação a um lead no Kommo CRM. WORKFLOW: 1) Use kommo_list_leads para obter o lead_id. 2) Passe o lead_id e texto da nota. A nota será registrada no histórico do lead, visível para toda a equipe. ⚠️ IMPORTANTE APROVAÇÃO: Se for adicionar notas em MÚLTIPLOS leads (loop/iteração), você DEVE pedir aprovação do usuário ANTES, mostrando quantos e quais leads receberão a nota. Use para documentar ligações, reuniões, acordos ou qualquer informação relevante sobre o lead.",
       inputSchema: {
         type: "object",
         properties: {
@@ -192,7 +192,7 @@ async function generateToolDefinitions(client: KommoClientInterface): Promise<MC
     },
     {
       name: "kommo_add_tasks",
-      description: "Cria tarefa/lembrete para um lead no Kommo CRM. WORKFLOW: 1) Use kommo_list_leads para obter lead_id. 2) Defina complete_till em Unix timestamp (exemplo: para amanhã use Date.now()/1000 + 86400). 3) Escolha task_type_id: 1=Ligar, 2=Reunião, 3=Escrever Email. A tarefa aparecerá no calendário do responsável pelo lead. IMPORTANTE: complete_till deve ser timestamp futuro em segundos (não milissegundos).",
+      description: "Cria tarefa/lembrete para um lead no Kommo CRM. WORKFLOW: 1) Use kommo_list_leads para obter lead_id. 2) Defina complete_till em Unix timestamp (exemplo: para amanhã use Date.now()/1000 + 86400). 3) Escolha task_type_id: 1=Ligar, 2=Reunião, 3=Escrever Email. ⚠️ IMPORTANTE APROVAÇÃO: Se for criar tarefas em MÚLTIPLOS leads (loop/iteração), você DEVE pedir aprovação do usuário ANTES, mostrando quantos e quais leads receberão a tarefa. A tarefa aparecerá no calendário do responsável pelo lead. IMPORTANTE: complete_till deve ser timestamp futuro em segundos (não milissegundos).",
       inputSchema: {
         type: "object",
         properties: {
@@ -1025,6 +1025,7 @@ async function handleMCPRequest(
             protocolVersion: MCP_PROTOCOL_VERSION,
             capabilities: {
               tools: {},
+              sampling: {},
             },
             serverInfo: SERVER_INFO,
           },
@@ -1032,6 +1033,34 @@ async function handleMCPRequest(
 
       case "notifications/initialized":
         return { jsonrpc: "2.0", id, result: {} };
+
+      case "sampling/createMessage": {
+        // O agente quer pedir aprovação ao usuário
+        const samplingParams = params as {
+          messages: Array<{ role: string; content: { type: string; text: string } }>;
+          maxTokens: number;
+        };
+        
+        // Extrair a mensagem do agente para o usuário
+        const agentMessage = samplingParams.messages
+          .filter((m) => m.role === "assistant")
+          .map((m) => m.content.text)
+          .join("\n");
+        
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            role: "assistant",
+            content: {
+              type: "text",
+              text: agentMessage || "Você gostaria de prosseguir com esta operação?",
+            },
+            model: "user-approval",
+            stopReason: "endTurn",
+          },
+        };
+      }
 
       case "tools/list": {
         // Gerar tool definitions dinamicamente com informações do CRM
