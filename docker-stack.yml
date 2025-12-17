@@ -1,38 +1,49 @@
-version: "3.8"
+version: "3.7"
 
 services:
+
+## --------------------------- KOMMO MCP SERVER --------------------------- ##
+
   kommo-mcp:
     image: ghcr.io/cardosolucass96/kommo-mcp-server:latest
+
+    networks:
+      - CardosoNet ## Nome da rede interna
+
     environment:
+      ## ⚙️ Configurações do Servidor
       - PORT=3000
       - HOST=0.0.0.0
       - MCP_PASSWORD=${MCP_PASSWORD}
-    networks:
-      - traefik-public
+
+      ## 🕒 Fuso Horário
+      - TZ=America/Sao_Paulo
+
     deploy:
-      replicas: 2
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
       update_config:
         parallelism: 1
         delay: 10s
         failure_action: rollback
         order: start-first
-      rollback_config:
-        parallelism: 1
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-        window: 120s
       labels:
-        - "traefik.enable=true"
-        - "traefik.docker.network=traefik-public"
-        - "traefik.http.routers.kommo-mcp.rule=Host(`mcp-kommo.cardosolucas.com`)"
-        - "traefik.http.routers.kommo-mcp.entrypoints=websecure"
-        - "traefik.http.routers.kommo-mcp.tls.certresolver=letsencrypt"
-        - "traefik.http.services.kommo-mcp.loadbalancer.server.port=3000"
-        - "traefik.http.services.kommo-mcp.loadbalancer.healthcheck.path=/health"
-        - "traefik.http.services.kommo-mcp.loadbalancer.healthcheck.interval=30s"
+        - traefik.enable=true
+        - traefik.http.routers.kommo_mcp.rule=Host(`mcp-kommo.cardosolucas.com`)
+        - traefik.http.routers.kommo_mcp.entrypoints=websecure
+        - traefik.http.routers.kommo_mcp.priority=1
+        - traefik.http.routers.kommo_mcp.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.kommo_mcp.service=kommo_mcp
+        - traefik.http.services.kommo_mcp.loadbalancer.server.port=3000
+        - traefik.http.services.kommo_mcp.loadbalancer.passHostHeader=1
+
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s
@@ -40,6 +51,9 @@ services:
       retries: 3
       start_period: 10s
 
+## --------------------------- KOMMO MCP SERVER --------------------------- ##
+
 networks:
-  traefik-public:
+  CardosoNet: ## Nome da rede interna
     external: true
+    name: CardosoNet ## Nome da rede interna
